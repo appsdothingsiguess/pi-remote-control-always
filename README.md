@@ -109,6 +109,7 @@ Both fields are optional. `url` must end in `/agent` and use `wss://`; `ws://` i
 | `RC_PUBLIC_ORIGIN`, `RC_AGENT_TOKEN`, `RC_ADMIN_PASSWORD`, `RC_HOST`, `RC_PORT` | server | Override the matching `config.json` field. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | server | Override the push keys. |
 | `PI_RC_URL` + `PI_RC_AGENT_TOKEN` | extension | Set both to replace `client.json`. |
+| `PI_RC_AUTO=1` | extension | Attach every interactive main session on start, as if `/rc` were typed. Headless runs and subagents are skipped; `/rc close` keeps it off for that process. |
 | `RC_CONFIG` | both | Use a different `config.json` path. `client.json` is read from the same directory. |
 
 The server stores the latest transcript of the 50 most recent sessions, plus its push keys and subscriptions, in `~/.local/state/prc` (`$XDG_STATE_HOME/prc`). Offline sessions stay readable; remove one with **Remove** in its **⋯** menu in the session list. To clear everything, stop `prc` and delete that directory.

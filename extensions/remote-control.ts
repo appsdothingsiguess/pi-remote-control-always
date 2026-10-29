@@ -353,6 +353,7 @@ export default function remoteControl(pi: ExtensionAPI) {
   let failed = false;
   // Announce only the connection a /rc command opens; automatic reconnects stay silent.
   let announce = false;
+  let closedByUser = false;
   let lastTitle = '';
   let lastBranch: string | null = null;
   // Tracked while disconnected too, so a reconnect during an open dialog still reports it.
@@ -680,6 +681,7 @@ export default function remoteControl(pi: ExtensionAPI) {
         return;
       }
       if (action === 'close') {
+        closedByUser = true;
         stop();
         current.ui.notify('Remote control closed', 'info');
         return;
@@ -688,30 +690,35 @@ export default function remoteControl(pi: ExtensionAPI) {
         current.ui.notify('Use /rc, /rc setup, /rc status, or /rc close', 'warning');
         return;
       }
-      try {
-        settings = connectionSettings();
-        if (!settings.url || !settings.token) {
-          stop();
-          current.ui.notify('Remote control not configured; run prc setup on this host or set both PI_RC_URL and PI_RC_AGENT_TOKEN', 'warning');
-          return;
-        }
-        ctx = current;
-        mainSession = isMainSession(current);
-        registerAsk();
-        status(current, connectionState() === 'retrying' ? 'retrying' : 'connecting');
-        if (socket?.readyState === WebSocket.OPEN) {
-          hello(current);
-          status(current, 'connected');
-        } else {
-          announce = true;
-          connect();
-        }
-      } catch (error) {
-        stop();
-        current.ui.notify(error instanceof Error && error.message.startsWith('Legacy private config found') ? error.message : 'Remote control configuration invalid; check private config or both PI_RC_URL and PI_RC_AGENT_TOKEN', 'error');
-      }
+      closedByUser = false;
+      attach(current);
     },
   });
+
+  function attach(current: ExtensionContext) {
+    try {
+      settings = connectionSettings();
+      if (!settings.url || !settings.token) {
+        stop();
+        current.ui.notify('Remote control not configured; run prc setup on this host or set both PI_RC_URL and PI_RC_AGENT_TOKEN', 'warning');
+        return;
+      }
+      ctx = current;
+      mainSession = isMainSession(current);
+      registerAsk();
+      status(current, connectionState() === 'retrying' ? 'retrying' : 'connecting');
+      if (socket?.readyState === WebSocket.OPEN) {
+        hello(current);
+        status(current, 'connected');
+      } else {
+        announce = true;
+        connect();
+      }
+    } catch (error) {
+      stop();
+      current.ui.notify(error instanceof Error && error.message.startsWith('Legacy private config found') ? error.message : 'Remote control configuration invalid; check private config or both PI_RC_URL and PI_RC_AGENT_TOKEN', 'error');
+    }
+  }
 
   function send(message: Record<string, unknown>) {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
@@ -851,6 +858,10 @@ export default function remoteControl(pi: ExtensionAPI) {
     }
   }
   pi.on('session_start', (_event, current) => sessionReplaced(current));
+  // PI_RC_AUTO=1 attaches every interactive main session without /rc; /rc close keeps it off for this process.
+  pi.on('session_start', (_event, current) => {
+    if (process.env.PI_RC_AUTO === '1' && !ctx && !closedByUser && current.hasUI && isMainSession(current)) attach(current);
+  });
   if (omp) {
     // These omp replacement events are not in Pi's ExtensionAPI overloads.
     const on = pi.on as (event: string, handler: (event: unknown, current: ExtensionContext) => void) => void;

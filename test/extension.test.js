@@ -1424,3 +1424,59 @@ test('Pi ignores omp background channels, and omp subagent sessions never publis
     assert.deepEqual((await hello()).background, []);
   }
 });
+
+test('PI_RC_AUTO=1 attaches interactive main sessions on start; headless, subagent and /rc close stay off', async t => {
+  const wss = new WebSocketServer({ port: 0 });
+  await once(wss, 'listening');
+  const old = Object.fromEntries(['PI_RC_URL', 'PI_RC_AGENT_TOKEN', 'RC_CONFIG', 'PI_RC_AUTO'].map(key => [key, process.env[key]]));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-rc-test-'));
+  const config = path.join(dir, 'config.json');
+  fs.writeFileSync(config, JSON.stringify({ publicOrigin: `http://127.0.0.1:${wss.address().port}`, agentToken: 'config-token' }), { mode: 0o600 });
+  process.env.RC_CONFIG = config;
+  process.env.PI_RC_AUTO = '1';
+  delete process.env.PI_RC_URL;
+  delete process.env.PI_RC_AGENT_TOKEN;
+  t.after(() => {
+    for (const [key, value] of Object.entries(old)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    fs.rmSync(dir, { recursive: true });
+    wss.close();
+  });
+  const settle = () => new Promise(resolve => setTimeout(resolve, 50));
+
+  const headless = mockPi();
+  (await load())(headless);
+  const printCtx = context('print');
+  printCtx.hasUI = false;
+  headless.emit('session_start', printCtx);
+  const subagent = mockPi();
+  (await load())(subagent);
+  const subCtx = context('sub');
+  subCtx.agent = { kind: 'subagent' };
+  subagent.emit('session_start', subCtx);
+  await settle();
+  assert.equal(wss.clients.size, 0);
+
+  const pi = mockPi();
+  (await load())(pi);
+  const ctx = context();
+  const connected = once(wss, 'connection');
+  pi.emit('session_start', ctx);
+  const [ws, request] = await connected;
+  assert.equal(request.headers.authorization, 'Bearer config-token');
+  for (let i = 0; i < 200 && ctx.state.statuses.at(-1)?.[1] !== '/rc connected'; i++) await settle();
+  assert.deepEqual(ctx.state.statuses.at(-1), ['rc', '/rc connected']);
+
+  const closed = once(ws, 'close');
+  pi.command('rc', 'close', ctx);
+  await closed;
+  pi.emit('session_start', context('s2'));
+  await settle();
+  assert.equal([...wss.clients].filter(client => client.readyState === 1).length, 0);
+
+  const again = once(wss, 'connection');
+  pi.command('rc', '', ctx);
+  const [ws2] = await again;
+  const closedAgain = once(ws2, 'close');
+  pi.command('rc', 'close', ctx);
+  await closedAgain;
+});
